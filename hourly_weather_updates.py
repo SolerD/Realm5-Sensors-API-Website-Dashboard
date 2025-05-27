@@ -84,18 +84,56 @@ def convert_to_us_units(key, value):
     else:
         return round(value, 1) if isinstance(value, float) else value
 
-# ✅ Output summary in UTC ISO 8601 format (Z suffix)
+# ✅Output summary in UTC ISO 8601 format (Z suffix)
 summary = {
     "timestamp": current_utc.isoformat().replace("+00:00", "Z")
 }
 
-for key in expected_keys:
+"""for key in expected_keys:
     values = aggregated.get(key, [])
     val = sum(values) if key == "rainfall_in" else sum(values) / len(values) if values else None
-    summary[key] = convert_to_us_units(key, val)
+    summary[key] = convert_to_us_units(key, val)"""
 
-# Save output file
-file_name = f"weather_summary_{current_utc.strftime('%Y-%m-%dT%H')}.json"
+for key in expected_keys:
+    values = aggregated.get(key, [])
+
+    if not values:
+        #summary[key] = None
+        summary[key] = 0.0 if key == "rainfall_in" else None
+        continue
+
+    # Apply meteorology-based logic
+    if key == "rainfall_in":
+        val = sum(values)  # Total hourly rainfall
+    elif key in ["wind_gust_kph_max", "solar_radiation_watts_per_meter_squared"]:
+        val = max(values)  # Peak values
+    else:
+        val = sum(values) / len(values)  # Average everything else
+
+    # Convert to US units
+    #summary[key] = convert_to_us_units(key, val)
+    # Mapping to simplified US-readable keys
+    rename_keys = {
+    "dew_point_c": "dew_point",
+    "temperature_c": "temperature",
+    "sea_level_pressure_hPa": "sea_level_pressure",
+    "wind_speed_kph": "wind_speed",
+    "wind_direction_degrees": "wind_direction",
+    "wind_gust_kph_max": "wind_gust",
+    "solar_radiation_watts_per_meter_squared": "solar_radiation",
+    "humidity_percent": "humidity",
+    "pressure_hPa": "pressure",
+    "rainfall_in": "rainfall"
+    }
+
+    # Use renamed key in final JSON
+    final_key = rename_keys.get(key, key)
+    summary[final_key] = convert_to_us_units(key, val)
+
+
+#Save output file
+os.makedirs("data", exist_ok=True)
+file_name = f"data/weather_summary_{current_utc.strftime('%Y-%m-%dT%H')}.json"
 with open(file_name, "w") as f:
     json.dump(summary, f, indent=2)
 
