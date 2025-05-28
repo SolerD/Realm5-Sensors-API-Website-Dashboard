@@ -1,4 +1,4 @@
-import pandas as pd
+"""import pandas as pd
 import requests
 from datetime import datetime, timedelta
 from pytz import timezone
@@ -82,7 +82,7 @@ df_today = pd.DataFrame(records)
 #output directory
 output_dir = "data"
 os.makedirs(output_dir, exist_ok=True)
-historical_file = os.path.join(output_dir, "realmfive_weather_full_data.csv")
+historical_file = os.path.join(output_dir, "full_weather_data.csv")
 
 #Load or initialize historical data
 if os.path.exists(historical_file):
@@ -138,6 +138,133 @@ else:
 #=== Saving CSV summaries ===
 temp_summary.to_csv(os.path.join(output_dir, "temperature_summary.csv"), index=False)
 rain_summary.to_csv(os.path.join(output_dir, "rainfall_summary.csv"), index=False)
+
+#Upload CSVs to S3
+try:
+    s3.upload_file(
+        Filename=os.path.join(output_dir, "temperature_summary.csv"),
+        Bucket=aws_bucket_name,
+        Key=f"{aws_s3_file_key}/temperature_summary.csv"
+    )
+    print(f"✅ Uploaded temperature_summary.csv to s3://{aws_bucket_name}/{aws_s3_file_key}/")
+
+    s3.upload_file(
+        Filename=os.path.join(output_dir, "rainfall_summary.csv"),
+        Bucket=aws_bucket_name,
+        Key=f"{aws_s3_file_key}/rainfall_summary.csv"
+    )
+    print(f"✅ Uploaded rainfall_summary.csv to s3://{aws_bucket_name}/{aws_s3_file_key}/")
+
+except Exception as e:
+    print(f"❌ Failed to upload to S3: {e}")
+"""
+
+
+
+
+
+from dotenv import load_dotenv
+import pandas as pd
+import requests
+from datetime import datetime, timedelta
+from pytz import timezone
+import os
+import json
+import boto3
+
+#Load environment variables
+load_dotenv()
+
+#Configuration
+historical_file = "data/realmfive_weather_full_data.csv"
+temperature_output_file = "data/temperature_summary.csv"
+rainfall_output_file = "data/rainfall_summary.csv"
+api_key = os.getenv('REALM5_API_KEY')
+dev_eui = os.getenv('WEATHER_STATION_DEVICE')
+access_key_id = os.getenv('AWS_ACCESS_KEY_ID')
+aws_region = os.getenv('AWS_REGION')
+aws_secret_key = os.getenv('AWS_SECRET_KEY')
+aws_bucket_name = os.getenv('AWS_BUCKET_NAME')
+
+local_file_path = "data"
+aws_s3_file_key = "dashboard/data"
+
+#Client
+s3 = boto3.client("s3",
+aws_access_key_id = access_key_id,
+aws_secret_access_key = aws_secret_key,
+region_name = aws_region
+)
+
+#Timezone setup
+eastern = timezone("US/Eastern")
+utc = timezone("UTC")
+
+#Load historical data
+df_full = pd.read_csv(historical_file, parse_dates=["timestamp"])
+df_full['timestamp'] = pd.to_datetime(df_full['timestamp'], utc=True).dt.tz_convert(eastern)
+df_full['date'] = df_full['timestamp'].dt.date
+df_full['year'] = df_full['timestamp'].dt.year
+df_full['month'] = df_full['timestamp'].dt.month
+df_full['day'] = df_full['timestamp'].dt.day
+
+#Get current year and today
+today = datetime.now(eastern).date()
+current_year = today.year
+
+#Group historical average by month/day (all years)
+hist_temp = df_full.groupby(['month', 'day'])['temperature'].agg(['min', 'max', 'mean']).reset_index()
+hist_temp.columns = ['month', 'day', 'hist_min_temp', 'hist_max_temp', 'hist_avg_temp']
+
+hist_rain = df_full.groupby(['month', 'day'])['rainfall'].mean().reset_index()
+hist_rain.columns = ['month', 'day', 'hist_avg_rainfall']
+
+#Extract current-year data from historical CSV
+df_current_year = df_full[df_full['year'] == current_year].copy()
+
+''' --- Temperature for current year --- '''
+cur_temp = df_current_year.groupby('date')['temperature'].agg(['min', 'max', 'mean']).reset_index()
+cur_temp['cur_min_temp'] = (cur_temp['min'] * 9/5 + 32).round(2)
+cur_temp['cur_max_temp'] = (cur_temp['max'] * 9/5 + 32).round(2)
+cur_temp['cur_avg_temp'] = (cur_temp['mean'] * 9/5 + 32).round(2)
+cur_temp['month'] = pd.to_datetime(cur_temp['date']).dt.month
+cur_temp['day'] = pd.to_datetime(cur_temp['date']).dt.day
+
+''' --- Rainfall for current year --- '''
+cur_rain = df_current_year.groupby('date')['rainfall'].sum().reset_index()
+cur_rain['daily_rainfall'] = (cur_rain['rainfall'] * 0.1).round(2)
+cur_rain['month'] = pd.to_datetime(cur_rain['date']).dt.month
+cur_rain['day'] = pd.to_datetime(cur_rain['date']).dt.day
+cur_rain = cur_rain.sort_values('date')
+cur_rain['running_total'] = cur_rain['daily_rainfall'].cumsum()
+
+''' Full calendar for the current year '''
+year_days = pd.date_range(start=datetime(current_year, 1, 1), end=datetime(current_year, 12, 31), freq='D')
+calendar = pd.DataFrame({'Date': year_days})
+calendar['month'] = calendar['Date'].dt.month
+calendar['day'] = calendar['Date'].dt.day
+
+#Merge all
+temp_summary = calendar.merge(hist_temp, on=['month', 'day'], how='left')
+temp_summary = temp_summary.merge(
+    cur_temp[['month', 'day', 'cur_min_temp', 'cur_max_temp', 'cur_avg_temp']],
+    on=['month', 'day'], how='left'
+)
+temp_summary = temp_summary[['Date', 'hist_min_temp', 'hist_max_temp', 'hist_avg_temp', 'cur_min_temp', 'cur_max_temp', 'cur_avg_temp']]
+
+rain_summary = calendar.merge(hist_rain, on=['month', 'day'], how='left')
+rain_summary = rain_summary.merge(
+    cur_rain[['month', 'day', 'daily_rainfall', 'running_total']],
+    on=['month', 'day'], how='left'
+)
+rain_summary = rain_summary[['Date', 'hist_avg_rainfall', 'daily_rainfall', 'running_total']]
+
+#Output to files
+output_dir = "data"
+os.makedirs("data", exist_ok=True)
+temp_summary.to_csv(temperature_output_file, index=False)
+rain_summary.to_csv(rainfall_output_file, index=False)
+
 
 #Upload CSVs to S3
 try:
