@@ -76,30 +76,31 @@ expected_keys = [
     "pressure_hPa", "rainfall_in"
 ]
 
-#✅Unit conversion function
+#Unit conversion function
 def convert_to_us_units(key, value):
     if value is None:
         return None
 
     if key in ["temperature_c", "dew_point_c"]:
-        return round((value * 9/5) + 32, 1)  # °C → °F
+        return round((value * 9/5) + 32, 1)  #°C → °F
 
     elif key == "rainfall_in":
-        return round(value * 0.1, 2)   # rounds → inches
+        return round(value * 0.1, 2)   #rounds → inches
 
     elif "pressure" in key:
-        return round(value * 0.02953, 2)     # hPa → inHg
+        return round(value * 0.02953, 2)     #hPa → inHg
 
     elif key in ["wind_speed_kph", "wind_gust_kph_max"]:
-        return round(value * 0.621371, 1)    # kph → mph
+        return round(value * 0.621371, 1)    #kph → mph
 
     elif key == "solar_radiation_watts_per_meter_squared":
-        return round(value * 2589988.11, 1)  # W/m² → W/mi²
+        #return round(value * 2589988.11, 1)  #W/m² → W/mi²
+        return round(value, 1)
 
     else:
         return round(value, 1) if isinstance(value, float) else value
 
-# ✅Output summary in UTC ISO 8601 format (Z suffix)
+#Output summary in UTC ISO 8601 format (Z suffix)
 summary = {
     #deleting timestamp from the JSON object
     "timestamp": current_utc.isoformat().replace("+00:00", "Z") 
@@ -118,17 +119,17 @@ for key in expected_keys:
         summary[key] = 0.0 if key == "rainfall_in" else None
         continue
 
-    # Apply meteorology-based logic
+    #Apply meteorology-based logic
     if key == "rainfall_in":
-        val = sum(values)  # Total hourly rainfall
+        val = sum(values)  #Total hourly rainfall
     elif key in ["wind_gust_kph_max", "solar_radiation_watts_per_meter_squared"]:
-        val = max(values)  # Peak values
+        val = max(values)  #Peak values
     else:
         val = sum(values) / len(values)  # Average everything else
 
-    # Convert to US units
+    #Convert to US units
     #summary[key] = convert_to_us_units(key, val)
-    # Mapping to simplified US-readable keys
+    #Mapping to simplified US-readable keys
     rename_keys = {
     "dew_point_c": "dew_point",
     "temperature_c": "temperature",
@@ -142,10 +143,9 @@ for key in expected_keys:
     "rainfall_in": "rainfall"
     }
 
-    # Use renamed key in final JSON
+    #Use renamed key in final JSON
     final_key = rename_keys.get(key, key)
     summary[final_key] = convert_to_us_units(key, val)
-
 
 #Save output file
 os.makedirs("data", exist_ok=True)
